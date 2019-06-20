@@ -239,7 +239,7 @@ void YoloObjectDetector::init()
       boost::bind(&YoloObjectDetector::checkForObjectsActionPreemptCB, this));
   checkForObjectsActionServer_->start();
 
- readCameraParametersColour("/home/reza/catkin_workspace/src/iai_kinect2/kinect2_bridge/data/002609462547/calib_color.yaml");
+ readCameraParametersColour("/home/reza/cws/src/iai_kinect2/kinect2_bridge/data/002609462547/calib_color.yaml");
 
  depthimageSubscriber_ = it_.subscribe("/kinect2/bigdepth", 1, &YoloObjectDetector::imageDepthCb, this);
 }
@@ -599,8 +599,8 @@ void YoloObjectDetector::yolo()
     fetch_thread = std::thread(&YoloObjectDetector::fetchInThread, this);
     detect_thread = std::thread(&YoloObjectDetector::detectInThread, this);
     if (!demoPrefix_) {
-      fps_ = 1./(what_time_is_it_now() - demoTime_);
-      demoTime_ = what_time_is_it_now();
+      fps_ = 0.3; //1./(what_time_is_it_now() - demoTime_);
+      //demoTime_ = what_time_is_it_now();
       if (viewImage_) {
         displayInThread(0);
       }
@@ -623,22 +623,34 @@ void YoloObjectDetector::yolo()
       //    std::cout << bigdepth << std::endl; break;
       cv::Mat falseColorsMap2;
       applyColorMap(adjMap2, falseColorsMap2, cv::COLORMAP_RAINBOW);
-      cv::namedWindow("bigdepth");
-      cv::Rect ROI(apple.at(0),133,169,203);
+      //cv::namedWindow("bigdepth");
+      cv::Rect ROI(apple.at(0),133,100,100);
       cv::Mat croppedImage = falseColorsMap2(ROI);
-      cv::imshow("bigdepth", croppedImage);
+      cv::imshow("bigdepth", falseColorsMap2);
       // std::cout << falseColorsMap2.cols << " " <<falseColorsMap2.rows << std::endl;
       char key1 = cvWaitKey(1);
 
-      // cv::Mat mugDepthFrame;
-      // std::vector<cv::Point3f> mugPoints;
-      // for (int i=0; i<mugDepthFrame.cols; i++){
-      //   for (int j=0; i<mugDepthFrame.rows; j++){
-      //       cv::Point3f point3d;
-      //       if (getDepthByColor(cv::Point2f(i,j), point3d))
-      //         mugPoints.push_back(point3d);
-      //   }
-      // }
+      ////// Cup Pointcloud //////
+      cv::Mat cupDepthFrame;
+      std::vector<cv::Point3f> cupPoints;
+      for (int i=20; i<(50); i++) {
+         for (int j=30; j<(60); j++) {
+             cv::Point3f point3d;
+             if (getDepthByColor(cv::Point2f(i,j), point3d)){
+              cupPoints.push_back(point3d);
+              //std::cout << "Yoooooo" << std::endl;
+             } 
+          }
+       std::cout << cupPoints << std::endl;
+      }
+      //std::cout << "cupPoints: " << cupPoints.at(0) << std::endl;
+      //for (int i=cup.at(0); i<(cup.at(0)+cup.at(3)); i++) {
+      //   for (int j=cup.at(1); i<(cup.at(1)+cup.at(4)); j++) {
+       //      cv::Point3f point3d;
+       //      if (getDepthByColor(cv::Point2f(i,j), point3d))
+       //        cupPoints.push_back(point3d);
+       //   }
+      //}
 
     }
 
@@ -723,51 +735,39 @@ void *YoloObjectDetector::publishInThread()
             std::cout << "Cup Score: " << (rosBoxes_[i][j].prob)*100 << "%\n----------------" << std::endl;
             std::cout << "Cup bounding box" << std::endl;
             std::cout << "----------------" << std::endl;
-            std::cout << "xmin: " << xmin << std::endl;
-            std::cout << "xmax: " << xmax << std::endl;
-            std::cout << "ymin: " << ymin << std::endl;
-            std::cout << "ymax: " << ymax << std::endl;
+            cup.at(0) = xmin; 
+            cup.at(1) = ymin;
+            cup.at(2) = xmax - xmin;
+            cup.at(3) = ymax - ymin;
+            std::cout << "xmin: " << cup.at(0) << std::endl;
+            std::cout << "xmax: " << cup.at(1) << std::endl;
+            std::cout << "Width: " << cup.at(2) << std::endl;
+            std::cout << "Height: " << cup.at(3) << std::endl;
             std::cout << "----------------" << std::endl;
             std::cout << "Centre point x: " << Xc << std::endl;
             std::cout << "Centre point y: " << Yc << std::endl;
             std::cout << std::endl << std::endl;
-            // std::cout << cup.at(0) << std::endl;
-            // std::cout << cup.at(1) << std::endl;
-            // std::cout << cup.at(2) << std::endl;
-            // std::cout << cup.at(3) << std::endl;
-            
-            if (iter == 10) {
-              cup.at(0) = xmin; 
-              cup.at(1) = ymin;
-              cup.at(2) = xmax - xmin;
-              cup.at(3) = ymax - ymin;
-              std::cout << cup.at(0) << std::endl;
-              std::cout << cup.at(1) << std::endl;
-              std::cout << cup.at(2) << std::endl;
-              std::cout << cup.at(3) << std::endl;
-            }
+
           }
 
           if (classLabels_[i] == "apple") {
             std::cout << "Apple Score: " << (rosBoxes_[i][j].prob)*100 << "%\n----------------" << std::endl;
             std::cout << "Apple bounding box" << std::endl;
             std::cout << "----------------" << std::endl;
-            //std::cout << "xmin: " << xmin << std::endl;
-            //std::cout << "xmax: " << xmax << std::endl;
-            //std::cout << "ymin: " << ymin << std::endl;
-            //std::cout << "ymax: " << ymax << std::endl;
             apple.at(0) = xmin; 
             apple.at(1) = ymin;
             apple.at(2) = xmax - xmin;
             apple.at(3) = ymax - ymin;
-            std::cout << apple.at(0) << std::endl;
-            std::cout << apple.at(1) << std::endl;
-            std::cout << apple.at(2) << std::endl;
-            std::cout << apple.at(3) << std::endl;
+            std::cout << "xmin: " << apple.at(0) << std::endl;
+            std::cout << "ymin: " << apple.at(1) << std::endl;
+            std::cout << "Width: " << apple.at(2) << std::endl;
+            std::cout << "Height: " << apple.at(3) << std::endl;
+            std::cout << "----------------" << std::endl;
+            std::cout << "Centre point x: " << Xc << std::endl;
+            std::cout << "Centre point y: " << Yc << std::endl;
 
 
           boundingBoxesResults_.bounding_boxes.push_back(boundingBox);
-          iter+=1;
           }
         }
       }
