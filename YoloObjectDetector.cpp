@@ -11,12 +11,15 @@
 
 // Check for xServer
 #include <X11/Xlib.h>
+#include <iostream>
 
 #ifdef DARKNET_FILE_PATH
 std::string darknetFilePath_ = DARKNET_FILE_PATH;
 #else
 #error Path of darknet repository is not defined in CMakeLists.txt.
 #endif
+
+bool SHOW_BIGDEPTH = true;
 
 namespace darknet_ros {
 
@@ -27,6 +30,7 @@ char **detectionNames;
 
 YoloObjectDetector::YoloObjectDetector(ros::NodeHandle nh)
     : nodeHandle_(nh),
+      it_(nodeHandle_),
       imageTransport_(nodeHandle_),
       numClasses_(0),
       classLabels_(0),
@@ -50,6 +54,63 @@ YoloObjectDetector::~YoloObjectDetector()
     isNodeRunning_ = false;
   }
   yoloThread_.join();
+}
+
+void YoloObjectDetector::imageDepthCb(const sensor_msgs::ImageConstPtr& msg)
+{
+
+    try
+    {
+      cv::Mat DepthFrame_;
+        cv_depth_ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::MONO16);
+        cv::flip(cv_depth_ptr->image, DepthFrame_, 1);
+        cv::resize(DepthFrame_, DepthFrame, cv::Size(960, 540), 0, 0, cv::INTER_AREA);
+//        std::cout << kinect->DepthFrame << std::endl << std::endl << std::endl;
+       // std::cout << "awqer" << std::endl;
+    }
+    catch (cv_bridge::Exception& e)
+    {
+        ROS_ERROR("cv_bridge exception: %s", e.what());
+        return;
+    }
+}
+
+// Input is 2D point on RGB frame, output the 3D reconstructed point
+bool YoloObjectDetector::getDepthByColor(const cv::Point2f &point2d, cv::Point3f &point3d) {
+
+    const float cx(camMatrix.at<double>(0,2)), cy(camMatrix.at<double>(1,2));
+    const float fx(1 / camMatrix.at<double>(0,0)), fy(1 / camMatrix.at<double>(1,1));
+
+    int c = int(point2d.x + 0.5), r = int(point2d.y + 0.5);
+    float x, y, z;
+
+    const float depth_val = DepthFrame.at<unsigned short>(r+1, c) / 1000.0f;
+
+    const float bad_point = std::numeric_limits<float>::quiet_NaN();
+
+    if (std::isnan(depth_val) || depth_val <= 0.001) {
+        //depth value is not valid
+        x = y = z = bad_point;
+    } else {
+        x = (c + 0.5 - cx) * fx * depth_val;
+        y = (r + 0.5 - cy) * fy * depth_val;
+        z = depth_val;
+    }
+
+    point3d = cv::Point3f(x,y,z);
+
+    return (std::isfinite(point3d.x) && point3d.x < 100);
+}
+
+void YoloObjectDetector::readCameraParametersColour(std::string filename)
+{
+    cv::FileStorage fs(filename, cv::FileStorage::READ);
+    if (!fs.isOpened())
+        std::cout << "RGBD calibration file cannot be opened" << std::endl;
+    fs["cameraMatrix"] >> camMatrix;
+    fs["distortionCoefficients"] >> distCoeffs;
+    std::cout << "RGBD cameraMatrix: " << camMatrix << std::endl;
+    std::cout << "RGBD distortion: " << distCoeffs << std::endl;
 }
 
 bool YoloObjectDetector::readParameters()
@@ -177,6 +238,10 @@ void YoloObjectDetector::init()
   checkForObjectsActionServer_->registerPreemptCallback(
       boost::bind(&YoloObjectDetector::checkForObjectsActionPreemptCB, this));
   checkForObjectsActionServer_->start();
+
+ readCameraParametersColour("/home/reza/catkin_workspace/src/iai_kinect2/kinect2_bridge/data/002609462547/calib_color.yaml");
+
+ depthimageSubscriber_ = it_.subscribe("/kinect2/bigdepth", 1, &YoloObjectDetector::imageDepthCb, this);
 }
 
 void YoloObjectDetector::cameraCallback(const sensor_msgs::ImageConstPtr& msg)
@@ -344,7 +409,7 @@ void *YoloObjectDetector::detectInThread()
     printf("\033[2J");
     printf("\033[1;1H");
     printf("\nFPS:%.1f\n",fps_);
-    //printf("Objects:\n\n");
+    printf("Objects:\n\n");
   }
   image display = buff_[(buffIndex_+2) % 3];
   draw_detections(display, dets, nboxes, demoThresh_, demoNames_, demoAlphabet_, demoClasses_);
@@ -545,6 +610,39 @@ void YoloObjectDetector::yolo()
       sprintf(name, "%s_%08d", demoPrefix_, count);
       save_image(buff_[(buffIndex_ + 1) % 3], name);
     }
+    // std::cout << SHOW_BIGDEPTH << " " << DepthFrame.empty() << std::endl;
+    if (SHOW_BIGDEPTH && !DepthFrame.empty()) {
+      // visualize bigdepth
+      cv::Mat bigdepth;
+      double min2;
+      double max2;
+      DepthFrame.convertTo(bigdepth, CV_16UC1);
+      cv::minMaxIdx(bigdepth, &min2, &max2);
+      cv::Mat adjMap2;
+      bigdepth.convertTo(adjMap2, CV_8UC1, 255 / (max2-min2), -min2);
+      //    std::cout << bigdepth << std::endl; break;
+      cv::Mat falseColorsMap2;
+      applyColorMap(adjMap2, falseColorsMap2, cv::COLORMAP_RAINBOW);
+      cv::namedWindow("bigdepth");
+      cv::Rect ROI(103,133,169,203);
+      cv::Mat croppedImage = falseColorsMap2(ROI);
+      cv::imshow("bigdepth", crop);
+      // std::cout << falseColorsMap2.cols << " " <<falseColorsMap2.rows << std::endl;
+      char key1 = cvWaitKey(1);
+
+      // cv::Mat mugDepthFrame;
+      // std::vector<cv::Point3f> mugPoints;
+      // for (int i=0; i<mugDepthFrame.cols; i++){
+      //   for (int j=0; i<mugDepthFrame.rows; j++){
+      //       cv::Point3f point3d;
+      //       if (getDepthByColor(cv::Point2f(i,j), point3d))
+      //         mugPoints.push_back(point3d);
+      //   }
+      // }
+
+    }
+
+
     fetch_thread.join();
     detect_thread.join();
     ++count;
@@ -575,18 +673,14 @@ bool YoloObjectDetector::isNodeRunning(void)
   return isNodeRunning_;
 }
 
-std::vector<int> cup{0,0,0,0};
-std::vector<int> apple{0,0,0,0};
-
 void *YoloObjectDetector::publishInThread()
 {
   // Publish image.
   cv::Mat cvImage = cv::cvarrToMat(ipl_);
-  std::cout << "size: " <<  cvImage.size() << std::endl;
   if (!publishDetectionImage(cv::Mat(cvImage))) {
     ROS_DEBUG("Detection image has not been broadcasted.");
   }
-  
+
   // Publish bounding boxes and detection result.
   int num = roiBoxes_[0].num;
   if (num > 0 && num <= 100) {
@@ -603,8 +697,6 @@ void *YoloObjectDetector::publishInThread()
     msg.data = num;
     objectPublisher_.publish(msg);
 
-    
-
     for (int i = 0; i < numClasses_; i++) {
       if (rosBoxCounter_[i] > 0) {
         darknet_ros_msgs::BoundingBox boundingBox;
@@ -615,69 +707,30 @@ void *YoloObjectDetector::publishInThread()
           int xmax = (rosBoxes_[i][j].x + rosBoxes_[i][j].w / 2) * frameWidth_;
           int ymax = (rosBoxes_[i][j].y + rosBoxes_[i][j].h / 2) * frameHeight_;
 
+
           //boundingBox.Class = classLabels_[i];
           //boundingBox.probability = rosBoxes_[i][j].prob;
           boundingBox.xmin = xmin;
-          boundingBox.ymin = ymin;
           boundingBox.xmax = xmax;
+          boundingBox.ymin = ymin;
           boundingBox.ymax = ymax;
-          //std::cout << classLabels_[i] << "  " << (rosBoxes_[i][j].prob)*100 << "%\n----------------" << std::endl;
-          
+          std::cout << classLabels_[i] << "  " << (rosBoxes_[i][j].prob)*100 << "%\n----------------" << std::endl;
+          std::cout << "xmin: " << xmin << std::endl;
+          std::cout << "xmax: " << xmax << std::endl;
+          std::cout << "ymin: " << ymin << std::endl;
+          std::cout << "ymax: " << ymax << std::endl;
           std::cout << std::endl;
-          //double Xc = ((xmax-xmin)/2)+xmin;
-	      //double Yc = ((ymax-ymin)/2)+ymin;
-	      //std::cout << "Centre point x: " << Xc << std::endl;
-	      //std::cout << "Centre point y: " << Yc << std::endl;
-	      //std::cout << "\n" << std::endl;
-          if (classLabels_[i] == "cup") {
-          	//std::cout << classLabels_[i] << "  " << (rosBoxes_[i][j].prob)*100 << "%\n----------------" << std::endl;
-            std::cout << "Cup bounding box" << std::endl;
-            std::cout << "----------------" << std::endl;
-            std::cout << "xmin: " << xmin << std::endl;
-            std::cout << "xmax: " << xmax << std::endl;
-            std::cout << "ymin: " << ymin << std::endl;
-            std::cout << "ymax: " << ymax << std::endl;
-            cup.at(0) = xmin; 
-            cup.at(1) = ymin;
-            cup.at(2) = xmin + (xmax - xmin);
-            cup.at(3) = ymin + (ymax - ymin);
-            // std::cout << cup.at(0) << std::endl;
-            // std::cout << cup.at(1) << std::endl;
-            // std::cout << cup.at(2) << std::endl;
-            // std::cout << cup.at(3) << std::endl;
-          }
-          if (classLabels_[i] == "apple") {
-          	std::cout << "Apple Score: " << (rosBoxes_[i][j].prob)*100 << "%\n----------------" << std::endl;
-            std::cout << "Apple bounding box" << std::endl;
-            std::cout << "----------------" << std::endl;
-            std::cout << "xmin: " << xmin << std::endl;
-            std::cout << "xmax: " << xmax << std::endl;
-            std::cout << "ymin: " << ymin << std::endl;
-            std::cout << "ymax: " << ymax << std::endl;
-            apple.at(0) = xmin; 
-            apple.at(1) = ymin;
-            apple.at(2) = xmin + (xmax - xmin);
-            apple.at(3) = ymin + (ymax - ymin);
-            // std::cout << apple.at(0) << std::endl;
-            // std::cout << apple.at(1) << std::endl;
-            // std::cout << apple.at(2) << std::endl;
-            // std::cout << apple.at(3) << std::endl;
+          double Xc = ((xmax-xmin)/2)+xmin;
+	  double Yc = ((ymax-ymin)/2)+ymin;
+	  std::cout << "Centre point x: " << Xc << std::endl;
+	  std::cout << "Centre point y: " << Yc << std::endl;
+	  std::cout << "\n" << std::endl;
+
+
+
           boundingBoxesResults_.bounding_boxes.push_back(boundingBox);
-          }
         }
       }
-    
-    //cv::Rect myROI(clock.at(0),clock.at(1),clock.at(2),clock.at(3));
-    cv::Rect cupROI(270,238,105,105);
-	cv::Mat cropped_cup = cvImage(cupROI);
-	cv::imshow("Cup ROI",cropped_cup);
-	char key1 = cvWaitKey(1);
-
-	cv::Rect appleROI(430,256,70,70);
-	cv::Mat cropped_apple = cvImage(appleROI);
-	cv::imshow("Apple ROI",cropped_apple);
-	char key2 = cvWaitKey(1);
-
     }
     boundingBoxesResults_.header.stamp = ros::Time::now();
     boundingBoxesResults_.header.frame_id = "detection";
