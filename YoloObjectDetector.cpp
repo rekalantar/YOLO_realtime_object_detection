@@ -12,6 +12,7 @@
 // Check for xServer
 #include <X11/Xlib.h>
 #include <iostream>
+#include <fstream>
 
 #ifdef DARKNET_FILE_PATH
 std::string darknetFilePath_ = DARKNET_FILE_PATH;
@@ -80,11 +81,15 @@ bool YoloObjectDetector::getDepthByColor(const cv::Point2f &point2d, cv::Point3f
 
     const float cx(camMatrix.at<double>(0,2)), cy(camMatrix.at<double>(1,2));
     const float fx(1 / camMatrix.at<double>(0,0)), fy(1 / camMatrix.at<double>(1,1));
-
+    std::cout << "CAMERA MATRIX:  " << camMatrix << std::endl << std::endl;
+// std::cout << "fx: " << camMatrix.at<double>(0,0) << " fy: " << camMatrix.at<double>(1,1) << std::endl;
+// std::cout << "fx: " << fx << " fy: " << fy << std::endl;
     int c = int(point2d.x + 0.5), r = int(point2d.y + 0.5);
     float x, y, z;
 
     const float depth_val = DepthFrame.at<unsigned short>(r+1, c) / 1000.0f;
+// std::cout << "depth_val: " << depth_val << " " << DepthFrame.at<unsigned short>(r+1, c) << " " << r << " " << c <<std::endl;
+
 
     const float bad_point = std::numeric_limits<float>::quiet_NaN();
 
@@ -98,8 +103,11 @@ bool YoloObjectDetector::getDepthByColor(const cv::Point2f &point2d, cv::Point3f
     }
 
     point3d = cv::Point3f(x,y,z);
-
-    return (std::isfinite(point3d.x) && point3d.x < 100);
+// std::cout << "fx: " << fx << " fy: " << fy << std::endl;
+//     std::cout << "cx: " << cx << " cy: " << cy << std::endl;
+//     std::cout << "point3dxyz: " << x << y << z << std::endl;
+// std::cout << "point3d: " << point3d << std::endl;
+    return (std::isfinite(point3d.x) && point3d.x < 100 && point3d.z < 10 && point3d.z > -10);
 }
 
 void YoloObjectDetector::readCameraParametersColour(std::string filename)
@@ -156,14 +164,14 @@ void YoloObjectDetector::init()
 
   // Path to weights file.
   nodeHandle_.param("yolo_model/weight_file/name", weightsModel,
-                    std::string("yolov2-tiny.weights"));
+                    std::string("yolov3.weights"));
   nodeHandle_.param("weights_path", weightsPath, std::string("/default"));
   weightsPath += "/" + weightsModel;
   weights = new char[weightsPath.length() + 1];
   strcpy(weights, weightsPath.c_str());
 
   // Path to config file.
-  nodeHandle_.param("yolo_model/config_file/name", configModel, std::string("yolov2-tiny.cfg"));
+  nodeHandle_.param("yolo_model/config_file/name", configModel, std::string("yolov3.cfg"));
   nodeHandle_.param("config_path", configPath, std::string("/default"));
   configPath += "/" + configModel;
   cfg = new char[configPath.length() + 1];
@@ -405,12 +413,12 @@ void *YoloObjectDetector::detectInThread()
 
   if (nms > 0) do_nms_obj(dets, nboxes, l.classes, nms);
 
-  if (enableConsoleOutput_) {
-    printf("\033[2J");
-    printf("\033[1;1H");
-    printf("\nFPS:%.1f\n",fps_);
-    printf("Objects:\n\n");
-  }
+  // if (enableConsoleOutput_) {
+  //   printf("\033[2J");
+  //   printf("\033[1;1H");
+  //   printf("\nFPS:%.1f\n",fps_);
+  //   printf("Objects:\n\n");
+  // }
   image display = buff_[(buffIndex_+2) % 3];
   draw_detections(display, dets, nboxes, demoThresh_, demoNames_, demoAlphabet_, demoClasses_);
 
@@ -467,6 +475,7 @@ void *YoloObjectDetector::detectInThread()
   demoIndex_ = (demoIndex_ + 1) % demoFrame_;
   running_ = 0;
   return 0;
+
 }
 
 void *YoloObjectDetector::fetchInThread()
@@ -594,12 +603,13 @@ void YoloObjectDetector::yolo()
 
   demoTime_ = what_time_is_it_now();
 
-  while (!demoDone_) {
+
+  while (!demoDone_ && frame_count < 25) {
     buffIndex_ = (buffIndex_ + 1) % 3;
     fetch_thread = std::thread(&YoloObjectDetector::fetchInThread, this);
     detect_thread = std::thread(&YoloObjectDetector::detectInThread, this);
     if (!demoPrefix_) {
-      fps_ = 0.3; //1./(what_time_is_it_now() - demoTime_);
+      fps_ = 0.1; // /(what_time_is_it_now() - demoTime_);
       //demoTime_ = what_time_is_it_now();
       if (viewImage_) {
         displayInThread(0);
@@ -624,36 +634,73 @@ void YoloObjectDetector::yolo()
       cv::Mat falseColorsMap2;
       applyColorMap(adjMap2, falseColorsMap2, cv::COLORMAP_RAINBOW);
       //cv::namedWindow("bigdepth");
-      cv::Rect ROI(apple.at(0),133,100,100);
-      cv::Mat croppedImage = falseColorsMap2(ROI);
       cv::imshow("bigdepth", falseColorsMap2);
       // std::cout << falseColorsMap2.cols << " " <<falseColorsMap2.rows << std::endl;
       char key1 = cvWaitKey(1);
+      
+      ////// Cup 3D Points //////
+      //cv::Mat cupDepthFrame;
+      std::cout << "Frame count: " << frame_count << std::endl;
+      //std::ofstream cup_xyz;
+      //cup_xyz.open("cup_xyz.txt", std::ofstream::out);
+      if (frame_count == 20) {
 
-      ////// Cup Pointcloud //////
-      cv::Mat cupDepthFrame;
-      std::vector<cv::Point3f> cupPoints;
-      for (int i=20; i<(50); i++) {
-         for (int j=30; j<(60); j++) {
-             cv::Point3f point3d;
-             if (getDepthByColor(cv::Point2f(i,j), point3d)){
-              cupPoints.push_back(point3d);
-              //std::cout << "Yoooooo" << std::endl;
-             } 
-          }
-       std::cout << cupPoints << std::endl;
+        //cv::Point3f cup_point3d;
+        // for (int i=cup.at(0); i< (cup.at(0)+cup.at(2)); i++) {
+        //    for (int j=cup.at(1); j<(cup.at(1)+cup.at(3)); j++) {
+        //       // std::cout << "=============\n Depth frame: " << DepthFrame.at<int>(i,j) << std::endl;
+        //       // std::cout << "+++++++++++++\n Big Depth: " << bigdepth.at<int>(i,j) << std::endl;
+        //        //cupPoints.push_back(DepthFrame.at<int>(i,j));
+        //        // if (getDepthByColor(cv::Point2f(i,j), cup_point3d)){
+        //        //    //cupPoints.push_back(cup_point3d);
+        //        //    //cup_xyz << point3d << std::endl; 
+        //        //  } 
+        //     } 
+        // }
+
+        /////// Apple 3D Points ////////
+        cv::Point3f apple_point3d;
+        // for (int i=apple.at(0); i< (apple.at(0)+apple.at(2)+1); i++) {
+        //    for (int j=apple.at(1); j<(apple.at(1)+apple.at(3)+1); j++) {
+        for (int i=0; i< 1081; i++) {
+           for (int j=0; j<961; j++) {
+               //std::cout << cupPoints << std::endl; 
+               if (getDepthByColor(cv::Point2f(i,j), apple_point3d)){
+                applePoints.push_back(apple_point3d);
+                //std::cout << point3d << std::endl;
+                // std::cout << "apple corners: " << apple.at(0) << " " << apple.at(2) << " " << apple.at(1) << " " << apple.at(3) << std::endl;
+                // std::cout << "aapple_point3d2: " << apple_point3d << std::endl;
+                // std::cout << "aapple_point3d3: " << applePoints.back() << std::endl;
+               } 
+            }
+        }
+
+        //std::ofstream cupxyz;
+        std::ofstream applexyz;
+        //cupxyz.open("/home/reza/Desktop/cup.txt");
+        applexyz.open("/home/reza/Desktop/apple1.txt");
+        if (applexyz.fail())
+        {
+            std::cout << "Failed to open outputfiles.\n";
+            break;
+        }
+        else
+        {
+        //std::cout << "applePoints: " << applePoints << std::endl;
+        //cupxyz << cupPoints << std::endl;
+        applexyz << applePoints << std::endl;
+        std::cout << "File saved successfully \n";
+        }
+        //cupxyz.close(); 
+        applexyz.close(); 
+
       }
-      //std::cout << "cupPoints: " << cupPoints.at(0) << std::endl;
-      //for (int i=cup.at(0); i<(cup.at(0)+cup.at(3)); i++) {
-      //   for (int j=cup.at(1); i<(cup.at(1)+cup.at(4)); j++) {
-       //      cv::Point3f point3d;
-       //      if (getDepthByColor(cv::Point2f(i,j), point3d))
-       //        cupPoints.push_back(point3d);
-       //   }
-      //}
 
+      frame_count+=1;
+      
     }
-
+      
+     
 
     fetch_thread.join();
     detect_thread.join();
@@ -662,7 +709,6 @@ void YoloObjectDetector::yolo()
       demoDone_ = true;
     }
   }
-
 }
 
 IplImageWithHeader_ YoloObjectDetector::getIplImageWithHeader()
@@ -732,13 +778,14 @@ void *YoloObjectDetector::publishInThread()
             double Yc = ((ymax-ymin)/2)+ymin;
             
           if (classLabels_[i] == "cup") {
-            std::cout << "Cup Score: " << (rosBoxes_[i][j].prob)*100 << "%\n----------------" << std::endl;
-            std::cout << "Cup bounding box" << std::endl;
-            std::cout << "----------------" << std::endl;
+            // std::cout << "Cup Score: " << (rosBoxes_[i][j].prob)*100 << "%\n----------------" << std::endl;
+            // std::cout << "Cup bounding box" << std::endl;
+            // std::cout << "----------------" << std::endl;
             cup.at(0) = xmin; 
             cup.at(1) = ymin;
             cup.at(2) = xmax - xmin;
             cup.at(3) = ymax - ymin;
+            /*
             std::cout << "xmin: " << cup.at(0) << std::endl;
             std::cout << "xmax: " << cup.at(1) << std::endl;
             std::cout << "Width: " << cup.at(2) << std::endl;
@@ -747,42 +794,41 @@ void *YoloObjectDetector::publishInThread()
             std::cout << "Centre point x: " << Xc << std::endl;
             std::cout << "Centre point y: " << Yc << std::endl;
             std::cout << std::endl << std::endl;
-
+            */
           }
 
           if (classLabels_[i] == "apple") {
-            std::cout << "Apple Score: " << (rosBoxes_[i][j].prob)*100 << "%\n----------------" << std::endl;
-            std::cout << "Apple bounding box" << std::endl;
-            std::cout << "----------------" << std::endl;
+            // std::cout << "Apple Score: " << (rosBoxes_[i][j].prob)*100 << "%\n----------------" << std::endl;
+            // std::cout << "Apple bounding box" << std::endl;
+            // std::cout << "----------------" << std::endl;
             apple.at(0) = xmin; 
             apple.at(1) = ymin;
             apple.at(2) = xmax - xmin;
             apple.at(3) = ymax - ymin;
-            std::cout << "xmin: " << apple.at(0) << std::endl;
+            /*std::cout << "xmin: " << apple.at(0) << std::endl;
             std::cout << "ymin: " << apple.at(1) << std::endl;
             std::cout << "Width: " << apple.at(2) << std::endl;
             std::cout << "Height: " << apple.at(3) << std::endl;
             std::cout << "----------------" << std::endl;
             std::cout << "Centre point x: " << Xc << std::endl;
-            std::cout << "Centre point y: " << Yc << std::endl;
+            std::cout << "Centre point y: " << Yc << std::endl;*/
 
 
           boundingBoxesResults_.bounding_boxes.push_back(boundingBox);
           }
         }
       }
-    int a = cup.at(0);
-    int b = cup.at(1);
-    cv::Rect cupROI(a,b,105,105);
     //cv::Rect cupROI(cup.at(0),cup.at(1),cup.at(2),cup.at(3));
-    cv::Mat cropped_cup = cvImage(cupROI);
-    cv::imshow("Cup ROI",cropped_cup);
-    char key1 = cvWaitKey(1);
+    //cv::Rect cupROI(312,263,98,98);
+    //cv::Mat cropped_cup = cvImage(cupROI);
+    //cv::imshow("Cup ROI",cropped_cup);
+    //char key1 = cvWaitKey(1);
 
-    cv::Rect appleROI(427,278,78,74);
-    cv::Mat cropped_apple = cvImage(appleROI);
-    cv::imshow("Apple ROI",cropped_apple);
-    char key2 = cvWaitKey(1);
+    //cv::Rect appleROI(apple.at(0),apple.at(1),apple.at(2),apple.at(3));
+    //cv::Rect appleROI(452,273,71,73);
+    //cv::Mat cropped_apple = cvImage(appleROI);
+    //cv::imshow("Apple ROI",cropped_apple);
+    //char key2 = cvWaitKey(1);
 
     }
     boundingBoxesResults_.header.stamp = ros::Time::now();
@@ -809,6 +855,19 @@ void *YoloObjectDetector::publishInThread()
 
   return 0;
 }
-
-
+/*
+pcl::visualization::PCLVisualizer::Ptr simpleVis (pcl::PointCloud<pcl::PointXYZ>::ConstPtr cloud)
+{
+  // --------------------------------------------
+  // -----Open 3D viewer and add point cloud-----
+  // --------------------------------------------
+  pcl::visualization::PCLVisualizer::Ptr viewer (new pcl::visualization::PCLVisualizer ("3D Viewer"));
+  viewer->setBackgroundColor (0, 0, 0);
+  viewer->addPointCloud<pcl::PointXYZ> (cloud, "sample cloud");
+  viewer->setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 1, "sample cloud");
+  viewer->addCoordinateSystem (1.0);
+  viewer->initCameraParameters ();
+  return (viewer);
+}
+*/
 } /* namespace darknet_ros*/
